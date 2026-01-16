@@ -16,6 +16,9 @@ pub mod dutch {
         end_time: i64,
         sell_amount: u64
     ) -> Result<()> {
+        let clock = Clock::get()?;
+        let rent = Rent::get()?;
+
         Ok(())
 
     }
@@ -35,13 +38,88 @@ pub mod dutch {
 }
 
 #[derive(Accounts)]
-pub struct Init<'info> {}
+pub struct Init<'info> {
+    #[account(mut)]
+    pub seller: Signer<'info>,
+
+    pub sell_mint: Account<'info, Mint>,
+    pub buy_mint: Account<'info, Mint>,
+
+    #[account(
+        init,
+        payer = seller,
+        space = 8 + Auction::LEN,
+        seeds = [b"auction", seller.key().as_ref()],
+        bump
+    )]
+    pub auction: Account<'info, Auction>,
+
+    #[account(mut)]
+    pub seller_sell_ata: Account<'info, TokenAccount>,
+
+    #[account(
+        init,
+        payer = seller,
+        token::mint = sell_mint,
+        token::authority = auction
+    )]
+    pub auction_sell_ata: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
 
 #[derive(Accounts)]
-pub struct Buy<'info> {}
+pub struct Buy<'info> {
+    #[account(mut)]
+    pub buyer: Signer<'info>,
+
+    #[account(mut)]
+    pub seller: SystemAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"auction", seller.key().as_ref()],
+        bump = auction.bump,
+    )]
+    pub auction: Account<'info, Auction>,
+
+    #[account(mut)]
+    pub seller_sell_ata: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub buyer_buy_ata: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub buyer_sell_ata: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub auction_sell_ata: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
 
 #[derive(Accounts)]
-pub struct Cancel<'info> {}
+pub struct Cancel<'info> {
+    #[account(mut)]
+    pub seller: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"auction", seller.key().as_ref()],
+        bump = auction.bump,
+        has_one = seller
+    )]
+    pub auction: Account<'info, Auction>,
+
+    #[account(mut)]
+    pub seller_sell_ata: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub auction_sell_ata: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
 
 #[account]
 pub struct Auction{
