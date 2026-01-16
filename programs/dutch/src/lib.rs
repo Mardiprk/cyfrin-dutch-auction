@@ -3,7 +3,7 @@ use anchor_spl::token::{
     self, CloseAccount, Mint, Token, TokenAccount, Transfer
 };
 
-declare_id!("HYFNrjfr3Re8gtUHbL7xhcMrPf9chgWXGigGDaD1rEeM");
+declare_id!("BZSZmLcYCDUSjPmSfB8PdQoHbNJ9WEAFJcPhnbkCoQzT");
 
 #[program]
 pub mod dutch {
@@ -67,19 +67,37 @@ pub mod dutch {
         require!(now >= auction.start_time, AuctionError::NotStarted);
         require!(now <= auction.end_time, AuctionError::Ended);
 
-        // ---- Linear price calculation ----
-        let elapsed = now - auction.start_time;
-        let duration = auction.end_time - auction.start_time;
+        let elapsed = now
+            .checked_sub(auction.start_time)
+            .ok_or(AuctionError::Overflow)?;
 
-        let price_diff = auction.start_price - auction.end_price;
-        let decay = (price_diff as i128 * elapsed as i128) / duration as i128;
+        let duration = auction
+            .end_time
+            .checked_sub(auction.start_time)
+            .ok_or(AuctionError::Overflow)?;
 
-        let current_price = auction.start_price - decay as u64;
-        
+        let price_diff = auction
+            .start_price
+            .checked_sub(auction.end_price)
+            .ok_or(AuctionError::Overflow)?;
+
+        let decay = (price_diff as i128)
+            .checked_mul(elapsed as i128)
+            .ok_or(AuctionError::Overflow)?
+            .checked_div(duration as i128)
+            .ok_or(AuctionError::Overflow)?;
+
+        let current_price = auction
+            .start_price
+            .checked_sub(decay as u64)
+            .ok_or(AuctionError::Overflow)?;
+
         require!(current_price >= auction.end_price, AuctionError::InvalidPrice);
         require!(current_price <= max_price, AuctionError::PriceTooHigh);
 
-        let total_cost = current_price.checked_mul(auction.sell_amount).ok_or(AuctionError::Overflow)?;
+        let total_cost = current_price
+            .checked_mul(auction.sell_amount)
+            .ok_or(AuctionError::Overflow)?;
         
         //transfer buy token to seller
         let cpi_accounts = Transfer{
@@ -132,6 +150,35 @@ pub mod dutch {
     }
 
     pub fn cancel(ctx: Context<Cancel>) -> Result<()>{
+        let auction = &ctx.accounts.auction;
+
+        let seeds = &[b"auction", auction.seller.as_ref(), &[auction.bump]];
+
+        let cpi_accounts = Transfer{
+            from: ctx.accounts.auction_sell_ata.to_account_info(),
+            to: ctx.accounts.seller_sell_ata.to_account_info(),
+            authority: ctx.accounts.auction.to_account_info(),
+        };
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                cpi_accounts,
+                &[seeds]), 
+                auction.sell_amount
+        )?;
+
+        // Close ATA
+        token::close_account(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                CloseAccount{
+                    account: ctx.accounts.auction_sell_ata.to_account_info(),
+                    destination: ctx.accounts.seller.to_account_info(),
+                    authority: ctx.accounts.auction.to_account_info()
+                },
+                &[seeds])
+        )?;
 
         Ok(())
     }
